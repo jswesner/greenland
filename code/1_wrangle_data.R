@@ -8,22 +8,16 @@ thule_birds = read_csv("data/thule_birds_r.csv") %>%
   mutate(mean_julian = mean(julian),
          sd_julian = sd(julian),
          julian_z = (julian - mean_julian)/sd_julian,
-         hg_mean = hg/mean(hg)) %>% 
-  group_by(species_common) %>% 
-  mutate(hg_mean_species = hg/mean(hg),
-         mean_n = mean(nitrogen, na.rm = T),
+         hg_mean = hg/mean(hg),
          sd_n = sd(nitrogen, na.rm = T),
+         mean_n = mean(nitrogen, na.rm = T),
          nitrogen_s = (nitrogen - mean_n)/sd_n,
          mean_c = mean(carbon, na.rm = T),
          sd_c = sd(carbon, na.rm = T),
-         carbon_s = (carbon - mean_c)/sd_c,
-         mean_hg = mean(hg)) %>% 
-  mutate(mean_julian = mean(julian),
-         sd_julian = sd(julian),
-         julian_z = (julian - mean_julian)/sd_julian,
-         hg_mean = hg/mean(hg),
-         actual_weight = parse_number(actual_weight),
-         actual_weight_s = scale(actual_weight)) 
+         carbon_s = (carbon - mean_c)/sd_c) %>% 
+  group_by(species_common) %>% 
+  mutate(hg_mean_species = hg/mean(hg),
+         mean_hg = mean(hg)) 
 
 saveRDS(thule_birds, file = "data/thule_birds_clean.rds")
 

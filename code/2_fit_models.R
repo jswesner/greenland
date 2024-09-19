@@ -6,133 +6,123 @@ library(brms)
 # load data
 thule_birds_clean = readRDS(file = "data/thule_birds_clean.rds") 
 
-thule_birds_clean %>% 
-  ggplot(aes(x = julian_z, y = hg_mean_species, color = species_common)) + 
-  geom_point()
-
-# linear regression - simple start
-
-brm_lm = brm(hg ~ julian,
-             data = thule_birds_clean,
-             family = gaussian())
-
-
-plot(conditional_effects(brm_lm), points = T)
-
-# linear regression - z-score y axis
-brm_lm_z = update(brm_lm, formula = . ~ julian_z,
-                  newdata = thule_birds_clean)
-
-plot(conditional_effects(brm_lm_z), points = T)
-
-
-# linear regression - z-score y axis + species
-brm_lm_z_species = update(brm_lm, formula = . ~ julian_z*species_common,
-                  newdata = thule_birds_clean)
-
-plot(conditional_effects(brm_lm_z_species), points = T)
-
-
-# linear regression - gamma (positive real numbers. NO negative numbers. Higher mean = higher variance)
-
-brm_lm_z_species = update(brm_lm, formula = . ~ julian_z*species_common,
-                          newdata = thule_birds_clean,
-                          family = Gamma(link = "log"))
-
-
-plot(conditional_effects(brm_lm_z_species), points = T)
-
-
-# generalized additive model with varying intercepts by species
-# informative priors for intercept of normal(1, 1)
-
-brm_smooth = brm(hg_mean_species ~ s(julian_z, by = species_common) + (1|species_common),
+# prior predictive
+brm_smooth_prior = brm(hg_mean_species ~ s(julian_z, by = species_common) +
+                         nitrogen_s + (1 + nitrogen_s|species_common),
                  data = thule_birds_clean,
                  family = Gamma(link = "log"),
-                 prior = c(prior(normal(0, 1), class = "Intercept"),
-                           prior(exponential(2), class = "sd")),
-                 iter = 2000,
-                 chains = 4)
+                 prior = c(prior(normal(0, 0.1), class = "Intercept"),
+                           prior(exponential(5), class = "sd"),
+                           prior(normal(0, 0.01), class = "b"),
+                           prior(normal(0, 1), class = "b", coef = "nitrogen_s")),
+                 iter = 500,
+                 chains = 1,
+                 sample_prior = "only")
 
 
-saveRDS(brm_smooth, file = "models/brm_smooth.rds")
+saveRDS(brm_smooth_prior, file = "models/brm_smooth_prior.rds")
 
-plot_brm = plot(conditional_effects(brm_smooth_n_mi), points = T)
+# plot and compare to risk cutoffs of 1000 ng/g/500. Dividing by 500 rescales the references to the mean-scaled Hg in the model
+prior_conds = plot(conditional_effects(brm_smooth_prior, effects = "julian_z:species_common", prob = 0.5))
 
-plot_brm$`hgmeanspecies.hgmeanspecies_julian_z:species_common` +
-  facet_wrap(~species_common)
+prior_conds$`julian_z:species_common` + scale_y_log10() + geom_hline(yintercept = c(1000/500, 2000/500))
 
-brm_smooth_n = update(brm_smooth, formula = . ~ s(julian_z, by = species_common) + 
-                        (1|species_common) + nitrogen_s,
+brm_smooth_n_gamma = update(readRDS("models/brm_smooth_prior.rds"), formula = . ~ 1 + s(julian_z, by = species_common) + 
+                        (1 + nitrogen_s|species_common),
                       newdata = thule_birds_clean,
-                      iter = 1000, chains = 1)
-saveRDS(brm_smooth_n, file = "models/brm_smooth_n.rds")
+                      iter = 2000, chains = 4, sample_prior = "no",
+                      cores = 4)
 
-plot(conditional_effects(brm_smooth_n), points = T)
+saveRDS(brm_smooth_n_gamma, file = "models/brm_smooth_n_gamma.rds")
 
-brm_smooth_no_n = update(brm_smooth_n, formula = . ~ s(julian_z, by = species_common) + 
+
+brm_smooth_c_gamma = update(readRDS("models/brm_smooth_prior.rds"), formula = . ~ 1 + s(julian_z, by = species_common) + 
+                              (1 + carbon_s|species_common),
+                            newdata = thule_birds_clean,
+                            iter = 2000, chains = 4, sample_prior = "no",
+                            cores = 4)
+
+saveRDS(brm_smooth_c_gamma, file = "models/brm_smooth_c_gamma.rds")
+
+
+brm_smooth_nc_gamma = update(readRDS("models/brm_smooth_n_gamma.rds"), 
+                             formula = . ~ 1 + s(julian_z, by = species_common) + 
+                              (1 + nitrogen_s + carbon_s|species_common),
+                            newdata = thule_birds_clean,
+                            iter = 2000, chains = 4, sample_prior = "no",
+                            cores = 4)
+
+saveRDS(brm_smooth_nc_gamma, file = "models/brm_smooth_nc_gamma.rds")
+
+
+brm_smooth_no_nc_gamma = update(brm_smooth_n_gamma, formula = . ~ s(julian_z, by = species_common) + 
                            (1|species_common),
+                           cores =4,
                          newdata = thule_birds_clean)
 
 
-saveRDS(brm_smooth_no_n, file = "models/brm_smooth_no_n.rds")
-plot(conditional_effects(brm_smooth_no_n), points = T)
-
-waic(brm_smooth_n)
-waic(brm_smooth_no_n)
-waic(brm_smooth)
-
-get_prior(bf(hg_mean_species ~ s(julian_z, by = species_common) + 
-               (1|species_common) + mi(nitrogen_s)) + 
-            bf(nitrogen_s|mi() ~ species_common),
-          data = thule_birds_clean,
-          prior = c(prior(normal(0, 1), class = "Intercept"),
-                    prior(exponential(2), class = sd)))
-
-brm_smooth_n_mi = brm(bf(hg_mean_species ~ s(julian_z, by = species_common) + 
-                        (1|species_common) + mi(nitrogen_s)) + 
-                          bf(nitrogen_s|mi() ~ species_common),
-                      data = thule_birds_clean,
-                      prior = c(prior(normal(0, 1), class = "Intercept")),
-                      iter = 2000, chains = 4)
-
-saveRDS(brm_smooth_n_mi, file = "models/brm_smooth_n_mi.rds")
-
-brm_smooth_nc_mi = brm(bf(hg_mean_species ~ s(julian_z, by = species_common) + 
-                           (1|species_common) + mi(nitrogen_s) + mi(carbon_s)) + 
-                        bf(nitrogen_s|mi() ~ species_common) + 
-                         bf(carbon_s|mi() ~ species_common),
-                      data = thule_birds_clean,
-                      prior = c(prior(normal(0, 1), class = "Intercept")),
-                      iter = 1000, chains = 1)
-
-saveRDS(brm_smooth_nc_mi, file = "models/brm_smooth_nc_mi.rds")
-
-brm_smooth_n_wt = brm(bf(hg_mean_species ~ s(julian_z, by = species_common) + 
-                            (1|species_common) + nitrogen_s + actual_weight_s),
-                       data = thule_birds_clean,
-                       prior = c(prior(normal(0, 1), class = "Intercept")),
-                       iter = 1000, chains = 1)
-
-saveRDS(brm_smooth_n_wt, file = "models/brm_smooth_n_wt.rds")
-
+saveRDS(brm_smooth_no_nc_gamma, file = "models/brm_smooth_no_nc_gamma.rds")
 
 # compare models ----------------------------------------------------------
+brm_smooth_c_gamma = readRDS(file = "models/brm_smooth_c_gamma.rds")
+brm_smooth_n_gamma = readRDS(file = "models/brm_smooth_n_gamma.rds")
+brm_smooth_nc_gamma = readRDS(file = "models/brm_smooth_nc_gamma.rds")
+brm_smooth_no_nc_gamma = readRDS(file = "models/brm_smooth_no_nc_gamma.rds")
 
-brm_smooth_nc_mi = readRDS(file = "models/brm_smooth_nc_mi.rds")
-brm_smooth_n_mi = readRDS(file = "models/brm_smooth_n_mi.rds")
-brm_smooth = readRDS(file = "models/brm_smooth.rds")
-brm_smooth_no_n = readRDS(file = "models/brm_smooth_no_n.rds")
-brm_smooth_n = readRDS(file = "models/brm_smooth_n.rds")
-brm_smooth_n_wt = readRDS(file = "models/brm_smooth_n_wt.rds")
+waic_newdata = brm_smooth_nc_gamma$data
+
+waic(brm_smooth_c_gamma, newdata = waic_newdata)
+waic(brm_smooth_n_gamma, newdata = waic_newdata)
+waic(brm_smooth_nc_gamma, newdata = waic_newdata)
+waic(brm_smooth_no_nc_gamma, newdata = waic_newdata)
+
+pp_check(brm_smooth_n_gamma, stat = "median", type = "stat")
+pp_check(brm_smooth_c_gamma, stat = "median", type = "stat")
+pp_check(brm_smooth_nc_gamma, stat = "median", type = "stat")
+pp_check(brm_smooth_no_nc_gamma, stat = "median", type = "stat")
+
+pp_check(brm_smooth_n_gamma)
+pp_check(brm_smooth_c_gamma)
+pp_check(brm_smooth_nc_gamma)
+pp_check(brm_smooth_no_nc_gamma)
 
 
-waic(brm_smooth_n_mi, newdata = thule_birds_clean %>% filter(!is.na(nitrogen))%>% filter(!is.na(carbon)))
-waic(brm_smooth_nc_mi, newdata = thule_birds_clean %>% filter(!is.na(nitrogen))%>% filter(!is.na(carbon)))
-waic(brm_smooth, newdata = thule_birds_clean %>% filter(!is.na(nitrogen)) %>% filter(!is.na(carbon)))
-waic(brm_smooth_n, newdata = thule_birds_clean %>% filter(!is.na(nitrogen)) %>% filter(!is.na(carbon)))
-waic(brm_smooth_no_n, newdata = thule_birds_clean %>% filter(!is.na(nitrogen)) %>% filter(!is.na(carbon)))
-waic(brm_smooth_n_wt, newdata = thule_birds_clean %>% filter(!is.na(nitrogen)) %>% filter(!is.na(carbon)))
+# fit with a globally centered response instead of centered by species -----------------------------------------------------
 
+newdat_1 = thule_birds_clean %>% 
+  ungroup %>% 
+  mutate(hg_1 = hg/mean(hg, na.rm = T))
 
-pp_check(brm_smooth_n, stat = "median", type = "stat")
+brm_smooth_nc_gamma_1 = update(readRDS("models/brm_smooth_n_gamma.rds"), 
+                             formula = hg_1 ~ s(julian_z, by = species_common) + (1 + nitrogen_s + carbon_s|species_common),
+                             newdata = newdat_1,
+                             family = Gamma(link = "log"),
+                             prior = c(prior(normal(0, 0.5), class = "Intercept"),
+                                       prior(exponential(5), class = "sd"),
+                                       prior(normal(0, 0.01), class = "b"),
+                                       prior(normal(0, 1), class = "b", coef = "nitrogen_s")),
+                             iter = 2000, chains = 4, sample_prior = "no",
+                             cores = 4)
+
+saveRDS(brm_smooth_nc_gamma_1, file = "models/brm_smooth_nc_gamma_1.rds")
+
+# fit nitrogen and carbon models ------------------------------------------
+isotope_data  = thule_birds_clean %>% 
+  pivot_longer(cols = c(nitrogen, carbon),
+               names_to = "isotope", 
+               values_to = "isotope_values") %>%
+  group_by(species_common, isotope) %>% 
+  mutate(isotope_mean = mean(isotope_values, na.rm = T)) %>% 
+  mutate(isotope_values_mean_centered = isotope_values/isotope_mean) %>% 
+  mutate(species_isotope = paste0(species_common, "_", isotope))
+
+saveRDS(isotope_data, file = "data/isotope_data.rds")
+
+brm_smooth_isotope_model = brm(isotope_values_mean_centered ~ s(julian_z, by = species_isotope),
+                               data = isotope_data, 
+                               family = gaussian(),
+                               prior = c(prior(normal(1, 0.2), class = "Intercept"),
+                                         prior(normal(0, 0.1), class = "b")),
+                               chains = 4, iter = 2000)
+
+saveRDS(brm_smooth_isotope_model, file = "models/brm_smooth_isotope_model.rds")
